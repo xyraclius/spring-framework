@@ -941,6 +941,23 @@ class DispatcherServletTests {
 		assertThat(response.getHeaderNames()).doesNotContain(HttpHeaders.CONTENT_TYPE);
 	}
 
+	@Test
+	void shouldResetContentDispositionIfNotCommitted() throws Exception {
+		StaticWebApplicationContext context = new StaticWebApplicationContext();
+		context.setServletContext(getServletContext());
+		context.registerSingleton("/error", ErrorController.class);
+		DispatcherServlet servlet = new DispatcherServlet(context);
+		servlet.init(servletConfig);
+
+		MockHttpServletRequest request = new MockHttpServletRequest(getServletContext(), "GET", "/error");
+		MockHttpServletResponse response = new MockHttpServletResponse();
+		assertThatThrownBy(() -> servlet.service(request, response)).isInstanceOf(ServletException.class).hasCauseInstanceOf(IllegalArgumentException.class);
+		assertThat(response.getContentAsByteArray()).isEmpty();
+		assertThat(response.getStatus()).isEqualTo(400);
+		assertThat(response.getHeaderNames()).doesNotContain(HttpHeaders.CONTENT_DISPOSITION);
+		assertThat(response.getHeaders(HttpHeaders.SET_COOKIE).size()).isEqualTo(2);
+	}
+
 
 	public static class ControllerFromParent implements Controller {
 
@@ -994,6 +1011,9 @@ class DispatcherServletTests {
 			response.setStatus(400);
 			response.setHeader("Test-Header", "spring");
 			response.addHeader("Content-Type", "application/json");
+			response.addHeader("Content-Disposition", "attachment; filename=\"report.txt\"");
+			response.addHeader("Set-Cookie", "sessionId=abc123; Path=/; HttpOnly");
+			response.addHeader("Set-Cookie", "theme=dark; Path=/; SameSite=Lax");
 			if (request.getAttribute("commit") != null) {
 				response.flushBuffer();
 			}

@@ -23,6 +23,7 @@ import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -285,6 +286,14 @@ public class DispatcherServlet extends FrameworkServlet {
 	 */
 	private static final String DEFAULT_STRATEGIES_PREFIX = "org.springframework.web.servlet";
 
+	/**
+	 * Headers that should be excluded to prevent duplication when
+	 * merging or modifying response headers.
+	 */
+	private static final Set<String> EXCLUDED_DUPLICATE_HEADERS = Set.of(
+			HttpHeaders.CONTENT_TYPE,
+			HttpHeaders.CONTENT_DISPOSITION
+	);
 
 	/** Additional logger to use when no mapped handler is found for a request. */
 	protected static final Log pageNotFoundLogger = LogFactory.getLog(PAGE_NOT_FOUND_LOG_CATEGORY);
@@ -1342,11 +1351,28 @@ public class DispatcherServlet extends FrameworkServlet {
 
 		// Success and error responses may use different content types
 		request.removeAttribute(HandlerMapping.PRODUCIBLE_MEDIA_TYPES_ATTRIBUTE);
-		// Reset the response content-type header and body buffer if the response is not committed already,
-		// leaving the other response headers in place.
 		try {
-			response.setHeader(HttpHeaders.CONTENT_TYPE, null);
-			response.resetBuffer();
+			int currentStatusCode = response.getStatus(); //get status code from exception
+
+			// Backup headers to re-add after reset
+			Map<String, List<String>> preservedHeaders = new LinkedHashMap<>();
+			for (String header : response.getHeaderNames()) {
+				if (!EXCLUDED_DUPLICATE_HEADERS.contains(header)) {
+					preservedHeaders.put(header, new ArrayList<>(response.getHeaders(header)));
+				}
+			}
+
+			response.reset(); // Clears headers to prevent duplicates, but also resets the status code and body
+			response.setStatus(currentStatusCode); // Restore the original status code
+
+			// Re-add preserved headers
+			for (Map.Entry<String, List<String>> entry : preservedHeaders.entrySet()) {
+				String name = entry.getKey();
+				List<String> values = entry.getValue();
+				for (String value : values) {
+					response.addHeader(name, value);
+				}
+			}
 		}
 		catch (IllegalStateException illegalStateException) {
 			// the response is already committed, leave it to exception handlers anyway
