@@ -82,12 +82,13 @@ public interface RetryPolicy {
 	 * Create a {@link RetryPolicy} configured with a maximum number of retry attempts.
 	 * <p>The returned policy uses a fixed backoff of {@value Builder#DEFAULT_DELAY}
 	 * milliseconds.
-	 * @param maxAttempts the maximum number of retry attempts; must be greater than zero
+	 * @param maxAttempts the maximum number of retry attempts;
+	 * must be positive (or zero for no retry)
 	 * @see Builder#maxAttempts(long)
 	 * @see FixedBackOff
 	 */
 	static RetryPolicy withMaxAttempts(long maxAttempts) {
-		Assert.isTrue(maxAttempts > 0, "Max attempts must be greater than zero");
+		assertMaxAttemptsIsNotNegative(maxAttempts);
 		return builder().backOff(new FixedBackOff(Builder.DEFAULT_DELAY, maxAttempts)).build();
 	}
 
@@ -97,6 +98,22 @@ public interface RetryPolicy {
 	 */
 	static Builder builder() {
 		return new Builder();
+	}
+
+
+	private static void assertMaxAttemptsIsNotNegative(long maxAttempts) {
+		Assert.isTrue(maxAttempts >= 0,
+				() -> "Invalid maxAttempts (%d): must be positive or zero for no retry.".formatted(maxAttempts));
+	}
+
+	private static void assertIsNotNegative(String name, Duration duration) {
+		Assert.isTrue(!duration.isNegative(),
+				() -> "Invalid %s (%dms): must be greater than or equal to zero.".formatted(name, duration.toMillis()));
+	}
+
+	private static void assertIsPositive(String name, Duration duration) {
+		Assert.isTrue((!duration.isNegative() && !duration.isZero()),
+				() -> "Invalid %s (%dms): must be greater than zero.".formatted(name, duration.toMillis()));
 	}
 
 
@@ -130,13 +147,13 @@ public interface RetryPolicy {
 
 		private @Nullable BackOff backOff;
 
-		private long maxAttempts;
+		private @Nullable Long maxAttempts;
 
 		private @Nullable Duration delay;
 
 		private @Nullable Duration jitter;
 
-		private double multiplier;
+		private @Nullable Double multiplier;
 
 		private @Nullable Duration maxDelay;
 
@@ -175,12 +192,12 @@ public interface RetryPolicy {
 		 * <p>The supplied value will override any previously configured value.
 		 * <p>You should not specify this configuration option if you have
 		 * configured a custom {@link #backOff(BackOff) BackOff} strategy.
-		 * @param maxAttempts the maximum number of retry attempts; must be
-		 * greater than zero
+		 * @param maxAttempts the maximum number of retry attempts;
+		 * must be positive (or zero for no retry)
 		 * @return this {@code Builder} instance for chained method invocations
 		 */
 		public Builder maxAttempts(long maxAttempts) {
-			Assert.isTrue(maxAttempts > 0, "Max attempts must be greater than zero");
+			assertMaxAttemptsIsNotNegative(maxAttempts);
 			this.maxAttempts = maxAttempts;
 			return this;
 		}
@@ -201,8 +218,7 @@ public interface RetryPolicy {
 		 * @see #maxDelay(Duration)
 		 */
 		public Builder delay(Duration delay) {
-			Assert.isTrue(!delay.isNegative(),
-					() -> "Invalid delay (%dms): must be >= 0.".formatted(delay.toMillis()));
+			assertIsNotNegative("delay", delay);
 			this.delay = delay;
 			return this;
 		}
@@ -227,8 +243,7 @@ public interface RetryPolicy {
 		 * @see #maxDelay(Duration)
 		 */
 		public Builder jitter(Duration jitter) {
-			Assert.isTrue(!jitter.isNegative(),
-					() -> "Invalid jitter (%dms): must be >= 0.".formatted(jitter.toMillis()));
+			assertIsNotNegative("jitter", jitter);
 			this.jitter = jitter;
 			return this;
 		}
@@ -243,6 +258,7 @@ public interface RetryPolicy {
 		 * <p>The supplied value will override any previously configured value.
 		 * <p>You should not specify this configuration option if you have
 		 * configured a custom {@link #backOff(BackOff) BackOff} strategy.
+		 * @param multiplier the multiplier value; must be greater than or equal to 1
 		 * @return this {@code Builder} instance for chained method invocations
 		 * @see #delay(Duration)
 		 * @see #jitter(Duration)
@@ -264,7 +280,7 @@ public interface RetryPolicy {
 		 * <p>The supplied value will override any previously configured value.
 		 * <p>You should not specify this configuration option if you have
 		 * configured a custom {@link #backOff(BackOff) BackOff} strategy.
-		 * @param maxDelay the maximum delay; must be positive
+		 * @param maxDelay the maximum delay; must be greater than zero
 		 * @return this {@code Builder} instance for chained method invocations
 		 * @see #delay(Duration)
 		 * @see #jitter(Duration)
@@ -384,29 +400,24 @@ public interface RetryPolicy {
 		public RetryPolicy build() {
 			BackOff backOff = this.backOff;
 			if (backOff != null) {
-				boolean misconfigured = (this.maxAttempts != 0) || (this.delay != null) || (this.jitter != null) ||
-						(this.multiplier != 0) || (this.maxDelay != null);
+				boolean misconfigured = (this.maxAttempts != null || this.delay != null || this.jitter != null ||
+						this.multiplier != null || this.maxDelay != null);
 				Assert.state(!misconfigured, """
 						The following configuration options are not supported with a custom BackOff strategy: \
 						maxAttempts, delay, jitter, multiplier, or maxDelay.""");
 			}
 			else {
 				ExponentialBackOff exponentialBackOff = new ExponentialBackOff();
-				exponentialBackOff.setMaxAttempts(this.maxAttempts > 0 ? this.maxAttempts : DEFAULT_MAX_ATTEMPTS);
+				exponentialBackOff.setMaxAttempts(this.maxAttempts != null ? this.maxAttempts : DEFAULT_MAX_ATTEMPTS);
 				exponentialBackOff.setInitialInterval(this.delay != null ? this.delay.toMillis() : DEFAULT_DELAY);
 				exponentialBackOff.setMaxInterval(this.maxDelay != null ? this.maxDelay.toMillis() : DEFAULT_MAX_DELAY);
-				exponentialBackOff.setMultiplier(this.multiplier > 1 ? this.multiplier : DEFAULT_MULTIPLIER);
+				exponentialBackOff.setMultiplier(this.multiplier != null ? this.multiplier : DEFAULT_MULTIPLIER);
 				if (this.jitter != null) {
 					exponentialBackOff.setJitter(this.jitter.toMillis());
 				}
 				backOff = exponentialBackOff;
 			}
 			return new DefaultRetryPolicy(this.includes, this.excludes, this.predicate, backOff);
-		}
-
-		private static void assertIsPositive(String name, Duration duration) {
-			Assert.isTrue((!duration.isNegative() && !duration.isZero()),
-					() -> "Invalid duration (%dms): %s must be positive.".formatted(duration.toMillis(), name));
 		}
 	}
 

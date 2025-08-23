@@ -142,10 +142,9 @@ class ResourceHttpRequestHandlerIntegrationTests {
 		assertThat(response.getContentAsString()).isEqualTo("""
 				{\
 				"detail":"No static resource non-existing.",\
-				"instance":"\\/cp\\/non-existing",\
+				"instance":"/cp/non-existing",\
 				"status":404,\
-				"title":"Not Found",\
-				"type":"about:blank"\
+				"title":"Not Found"\
 				}\
 				""");
 	}

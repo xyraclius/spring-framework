@@ -23,7 +23,9 @@ import java.util.Properties;
 import javax.sql.DataSource;
 
 import org.hibernate.Interceptor;
+import org.hibernate.Session;
 import org.hibernate.SessionFactory;
+import org.hibernate.StatelessSession;
 import org.hibernate.boot.MetadataSources;
 import org.hibernate.boot.model.naming.ImplicitNamingStrategy;
 import org.hibernate.boot.model.naming.PhysicalNamingStrategy;
@@ -41,6 +43,7 @@ import org.springframework.beans.factory.BeanFactoryAware;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.FactoryBean;
 import org.springframework.beans.factory.InitializingBean;
+import org.springframework.beans.factory.SmartFactoryBean;
 import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.context.ResourceLoaderAware;
@@ -59,7 +62,7 @@ import org.springframework.core.type.filter.TypeFilter;
  * way to set up a shared Hibernate SessionFactory in a Spring application context; the
  * SessionFactory can then be passed to data access objects via dependency injection.
  *
- * <p>Compatible with Hibernate ORM 7.0, as of Spring Framework 7.0.
+ * <p>Compatible with Hibernate ORM 7.1, as of Spring Framework 7.0.
  * This Hibernate-specific {@code LocalSessionFactoryBean} can be an immediate alternative
  * to {@link org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean} for
  * common JPA purposes: The Hibernate {@code SessionFactory} will natively expose the JPA
@@ -77,7 +80,7 @@ import org.springframework.core.type.filter.TypeFilter;
  * @see org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean
  */
 public class LocalSessionFactoryBean extends HibernateExceptionTranslator
-		implements FactoryBean<SessionFactory>, ResourceLoaderAware, BeanFactoryAware,
+		implements SmartFactoryBean<SessionFactory>, ResourceLoaderAware, BeanFactoryAware,
 		InitializingBean, SmartInitializingSingleton, DisposableBean {
 
 	private @Nullable DataSource dataSource;
@@ -106,7 +109,7 @@ public class LocalSessionFactoryBean extends HibernateExceptionTranslator
 
 	private @Nullable MultiTenantConnectionProvider<?> multiTenantConnectionProvider;
 
-	private @Nullable CurrentTenantIdentifierResolver<Object> currentTenantIdentifierResolver;
+	private @Nullable CurrentTenantIdentifierResolver<?> currentTenantIdentifierResolver;
 
 	private @Nullable Properties hibernateProperties;
 
@@ -133,6 +136,10 @@ public class LocalSessionFactoryBean extends HibernateExceptionTranslator
 	private @Nullable Configuration configuration;
 
 	private @Nullable SessionFactory sessionFactory;
+
+	private @Nullable Session sharedSession;
+
+	private @Nullable StatelessSession sharedStatelessSession;
 
 
 	/**
@@ -288,7 +295,7 @@ public class LocalSessionFactoryBean extends HibernateExceptionTranslator
 	 * Set a {@link CurrentTenantIdentifierResolver} to be passed on to the SessionFactory.
 	 * @see LocalSessionFactoryBuilder#setCurrentTenantIdentifierResolver
 	 */
-	public void setCurrentTenantIdentifierResolver(CurrentTenantIdentifierResolver<Object> currentTenantIdentifierResolver) {
+	public void setCurrentTenantIdentifierResolver(CurrentTenantIdentifierResolver<?> currentTenantIdentifierResolver) {
 		this.currentTenantIdentifierResolver = currentTenantIdentifierResolver;
 	}
 
@@ -565,6 +572,8 @@ public class LocalSessionFactoryBean extends HibernateExceptionTranslator
 		// Build SessionFactory instance.
 		this.configuration = sfb;
 		this.sessionFactory = buildSessionFactory(sfb);
+		this.sharedSession = SharedSessionCreator.createSharedSession(this.sessionFactory);
+		this.sharedStatelessSession = SharedSessionCreator.createSharedStatelessSession(this.sessionFactory);
 	}
 
 	@Override
@@ -614,9 +623,24 @@ public class LocalSessionFactoryBean extends HibernateExceptionTranslator
 		return (this.sessionFactory != null ? this.sessionFactory.getClass() : SessionFactory.class);
 	}
 
+	/**
+	 * Return either the singleton SessionFactory or a shared (Stateless)Session proxy.
+	 */
 	@Override
-	public boolean isSingleton() {
-		return true;
+	public <S> @Nullable S getObject(Class<S> type) throws Exception {
+		if (Session.class.isAssignableFrom(type)) {
+			return type.cast(this.sharedSession);
+		}
+		if (StatelessSession.class.isAssignableFrom(type)) {
+			return type.cast(this.sharedStatelessSession);
+		}
+		return SmartFactoryBean.super.getObject(type);
+	}
+
+	@Override
+	public boolean supportsType(Class<?> type) {
+		return (type == Session.class || type == StatelessSession.class ||
+				SmartFactoryBean.super.supportsType(type));
 	}
 
 

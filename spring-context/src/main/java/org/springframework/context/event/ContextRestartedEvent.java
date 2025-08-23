@@ -17,6 +17,7 @@
 package org.springframework.context.event;
 
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.ConfigurableApplicationContext;
 
 /**
  * Event raised when an {@code ApplicationContext} gets restarted.
@@ -26,8 +27,9 @@ import org.springframework.context.ApplicationContext;
  *
  * @author Sam Brannen
  * @since 7.0
+ * @see ConfigurableApplicationContext#restart()
+ * @see ContextPausedEvent
  * @see ContextStartedEvent
- * @see ContextStoppedEvent
  */
 @SuppressWarnings("serial")
 public class ContextRestartedEvent extends ContextStartedEvent {

@@ -17,16 +17,22 @@
 package org.springframework.resilience;
 
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.file.AccessDeniedException;
 import java.time.Duration;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.aopalliance.intercept.MethodInterceptor;
 import org.junit.jupiter.api.Test;
 
 import org.springframework.aop.framework.AopProxyUtils;
+import org.springframework.aop.framework.ProxyConfig;
 import org.springframework.aop.framework.ProxyFactory;
+import org.springframework.aop.framework.autoproxy.AutoProxyUtils;
+import org.springframework.aop.interceptor.SimpleTraceInterceptor;
+import org.springframework.aop.support.AopUtils;
 import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
@@ -56,7 +62,30 @@ class RetryInterceptorTests {
 		pf.setTarget(target);
 		pf.addAdvice(new SimpleRetryInterceptor(
 				new MethodRetrySpec((m, t) -> true, 5, Duration.ofMillis(10))));
-		NonAnnotatedBean proxy = (NonAnnotatedBean) pf.getProxy();
+		pf.addAdvice(new SimpleTraceInterceptor());
+		PlainInterface proxy = (PlainInterface) pf.getProxy();
+
+		assertThatIOException().isThrownBy(proxy::retryOperation).withMessage("6");
+		assertThat(target.counter).isEqualTo(6);
+	}
+
+	@Test
+	void withSimpleInterceptorAndNoTarget() {
+		NonAnnotatedBean target = new NonAnnotatedBean();
+		ProxyFactory pf = new ProxyFactory();
+		pf.addAdvice(new SimpleRetryInterceptor(
+				new MethodRetrySpec((m, t) -> true, 5, Duration.ofMillis(10))));
+		pf.addAdvice(new SimpleTraceInterceptor());
+		pf.addAdvice((MethodInterceptor) invocation -> {
+			try {
+				return invocation.getMethod().invoke(target, invocation.getArguments());
+			}
+			catch (InvocationTargetException ex) {
+				throw ex.getTargetException();
+			}
+		});
+		pf.addInterface(PlainInterface.class);
+		PlainInterface proxy = (PlainInterface) pf.getProxy();
 
 		assertThatIOException().isThrownBy(proxy::retryOperation).withMessage("6");
 		assertThat(target.counter).isEqualTo(6);
@@ -72,6 +101,78 @@ class RetryInterceptorTests {
 		AnnotatedMethodBean proxy = bf.getBean(AnnotatedMethodBean.class);
 		AnnotatedMethodBean target = (AnnotatedMethodBean) AopProxyUtils.getSingletonTarget(proxy);
 
+		assertThatIOException().isThrownBy(proxy::retryOperation).withMessage("6");
+		assertThat(target.counter).isEqualTo(6);
+	}
+
+	@Test
+	void withPostProcessorForMethodWithInterface() {
+		DefaultListableBeanFactory bf = new DefaultListableBeanFactory();
+		bf.registerBeanDefinition("bean", new RootBeanDefinition(AnnotatedMethodBeanWithInterface.class));
+		RetryAnnotationBeanPostProcessor bpp = new RetryAnnotationBeanPostProcessor();
+		bpp.setBeanFactory(bf);
+		bf.addBeanPostProcessor(bpp);
+		AnnotatedInterface proxy = bf.getBean(AnnotatedInterface.class);
+		AnnotatedMethodBeanWithInterface target = (AnnotatedMethodBeanWithInterface) AopProxyUtils.getSingletonTarget(proxy);
+
+		assertThat(AopUtils.isJdkDynamicProxy(proxy)).isTrue();
+		assertThatIOException().isThrownBy(proxy::retryOperation).withMessage("6");
+		assertThat(target.counter).isEqualTo(6);
+	}
+
+	@Test
+	void withPostProcessorForMethodWithInterfaceAndDefaultTargetClass() {
+		ProxyConfig defaultProxyConfig = new ProxyConfig();
+		defaultProxyConfig.setProxyTargetClass(true);
+
+		DefaultListableBeanFactory bf = new DefaultListableBeanFactory();
+		bf.registerSingleton(AutoProxyUtils.DEFAULT_PROXY_CONFIG_BEAN_NAME, defaultProxyConfig);
+		bf.registerBeanDefinition("bean", new RootBeanDefinition(AnnotatedMethodBeanWithInterface.class));
+		RetryAnnotationBeanPostProcessor bpp = new RetryAnnotationBeanPostProcessor();
+		bpp.setBeanFactory(bf);
+		bf.addBeanPostProcessor(bpp);
+		AnnotatedInterface proxy = bf.getBean(AnnotatedInterface.class);
+		AnnotatedMethodBeanWithInterface target = (AnnotatedMethodBeanWithInterface) AopProxyUtils.getSingletonTarget(proxy);
+
+		assertThat(AopUtils.isCglibProxy(proxy)).isTrue();
+		assertThatIOException().isThrownBy(proxy::retryOperation).withMessage("6");
+		assertThat(target.counter).isEqualTo(6);
+	}
+
+	@Test
+	void withPostProcessorForMethodWithInterfaceAndPreserveTargetClass() {
+		DefaultListableBeanFactory bf = new DefaultListableBeanFactory();
+		RootBeanDefinition bd = new RootBeanDefinition(AnnotatedMethodBeanWithInterface.class);
+		bd.setAttribute(AutoProxyUtils.PRESERVE_TARGET_CLASS_ATTRIBUTE, Boolean.TRUE);
+		bf.registerBeanDefinition("bean", bd);
+		RetryAnnotationBeanPostProcessor bpp = new RetryAnnotationBeanPostProcessor();
+		bpp.setBeanFactory(bf);
+		bf.addBeanPostProcessor(bpp);
+		AnnotatedInterface proxy = bf.getBean(AnnotatedInterface.class);
+		AnnotatedMethodBeanWithInterface target = (AnnotatedMethodBeanWithInterface) AopProxyUtils.getSingletonTarget(proxy);
+
+		assertThat(AopUtils.isCglibProxy(proxy)).isTrue();
+		assertThatIOException().isThrownBy(proxy::retryOperation).withMessage("6");
+		assertThat(target.counter).isEqualTo(6);
+	}
+
+	@Test
+	void withPostProcessorForMethodWithInterfaceAndExposeInterfaces() {
+		ProxyConfig defaultProxyConfig = new ProxyConfig();
+		defaultProxyConfig.setProxyTargetClass(true);
+
+		DefaultListableBeanFactory bf = new DefaultListableBeanFactory();
+		bf.registerSingleton(AutoProxyUtils.DEFAULT_PROXY_CONFIG_BEAN_NAME, defaultProxyConfig);
+		RootBeanDefinition bd = new RootBeanDefinition(AnnotatedMethodBeanWithInterface.class);
+		bd.setAttribute(AutoProxyUtils.EXPOSED_INTERFACES_ATTRIBUTE, AutoProxyUtils.ALL_INTERFACES_ATTRIBUTE_VALUE);
+		bf.registerBeanDefinition("bean", bd);
+		RetryAnnotationBeanPostProcessor bpp = new RetryAnnotationBeanPostProcessor();
+		bpp.setBeanFactory(bf);
+		bf.addBeanPostProcessor(bpp);
+		AnnotatedInterface proxy = bf.getBean(AnnotatedInterface.class);
+		AnnotatedMethodBeanWithInterface target = (AnnotatedMethodBeanWithInterface) AopProxyUtils.getSingletonTarget(proxy);
+
+		assertThat(AopUtils.isJdkDynamicProxy(proxy)).isTrue();
 		assertThatIOException().isThrownBy(proxy::retryOperation).withMessage("6");
 		assertThat(target.counter).isEqualTo(6);
 	}
@@ -120,6 +221,31 @@ class RetryInterceptorTests {
 	}
 
 	@Test
+	void withPostProcessorForClassWithZeroAttempts() {
+		Properties props = new Properties();
+		props.setProperty("delay", "10");
+		props.setProperty("jitter", "5");
+		props.setProperty("multiplier", "2.0");
+		props.setProperty("maxDelay", "40");
+		props.setProperty("limitedAttempts", "0");
+
+		GenericApplicationContext ctx = new GenericApplicationContext();
+		ctx.getEnvironment().getPropertySources().addFirst(new PropertiesPropertySource("props", props));
+		ctx.registerBeanDefinition("bean", new RootBeanDefinition(AnnotatedClassBeanWithStrings.class));
+		ctx.registerBeanDefinition("bpp", new RootBeanDefinition(RetryAnnotationBeanPostProcessor.class));
+		ctx.refresh();
+		AnnotatedClassBeanWithStrings proxy = ctx.getBean(AnnotatedClassBeanWithStrings.class);
+		AnnotatedClassBeanWithStrings target = (AnnotatedClassBeanWithStrings) AopProxyUtils.getSingletonTarget(proxy);
+
+		assertThatIOException().isThrownBy(proxy::retryOperation).withMessage("3");
+		assertThat(target.counter).isEqualTo(3);
+		assertThatIOException().isThrownBy(proxy::otherOperation);
+		assertThat(target.counter).isEqualTo(4);
+		assertThatIOException().isThrownBy(proxy::overrideOperation);
+		assertThat(target.counter).isEqualTo(5);
+	}
+
+	@Test
 	void withEnableAnnotation() throws Exception {
 		AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext();
 		ctx.registerBeanDefinition("bean", new RootBeanDefinition(DoubleAnnotatedBean.class));
@@ -137,7 +263,7 @@ class RetryInterceptorTests {
 	}
 
 
-	static class NonAnnotatedBean {
+	static class NonAnnotatedBean implements PlainInterface {
 
 		int counter = 0;
 
@@ -145,6 +271,12 @@ class RetryInterceptorTests {
 			counter++;
 			throw new IOException(Integer.toString(counter));
 		}
+	}
+
+
+	public interface PlainInterface {
+
+		void retryOperation() throws IOException;
 	}
 
 
@@ -157,6 +289,26 @@ class RetryInterceptorTests {
 			counter++;
 			throw new IOException(Integer.toString(counter));
 		}
+	}
+
+
+	static class AnnotatedMethodBeanWithInterface implements AnnotatedInterface {
+
+		int counter = 0;
+
+		@Retryable(maxAttempts = 5, delay = 10)
+		@Override
+		public void retryOperation() throws IOException {
+			counter++;
+			throw new IOException(Integer.toString(counter));
+		}
+	}
+
+
+	interface AnnotatedInterface {
+
+		@Retryable(maxAttempts = 5, delay = 10)
+		void retryOperation() throws IOException;
 	}
 
 

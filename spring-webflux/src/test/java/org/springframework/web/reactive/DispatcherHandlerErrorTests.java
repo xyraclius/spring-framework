@@ -123,10 +123,9 @@ public class DispatcherHandlerErrorTests {
 		assertThat(response.getBodyAsString().block()).isEqualTo("""
 				{\
 				"detail":"No static resource non-existing.",\
-				"instance":"\\/resources\\/non-existing",\
+				"instance":"/resources/non-existing",\
 				"status":404,\
-				"title":"Not Found",\
-				"type":"about:blank"}\
+				"title":"Not Found"}\
 				""");
 	}
 

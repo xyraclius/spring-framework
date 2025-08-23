@@ -66,6 +66,7 @@ import org.springframework.context.PayloadApplicationEvent;
 import org.springframework.context.ResourceLoaderAware;
 import org.springframework.context.event.ApplicationEventMulticaster;
 import org.springframework.context.event.ContextClosedEvent;
+import org.springframework.context.event.ContextPausedEvent;
 import org.springframework.context.event.ContextRefreshedEvent;
 import org.springframework.context.event.ContextRestartedEvent;
 import org.springframework.context.event.ContextStartedEvent;
@@ -1486,17 +1487,17 @@ public abstract class AbstractApplicationContext extends DefaultResourceLoader
 	//---------------------------------------------------------------------
 
 	@Override
-	public @Nullable String getMessage(String code, Object @Nullable [] args, @Nullable String defaultMessage, Locale locale) {
+	public @Nullable String getMessage(String code, Object @Nullable [] args, @Nullable String defaultMessage, @Nullable Locale locale) {
 		return getMessageSource().getMessage(code, args, defaultMessage, locale);
 	}
 
 	@Override
-	public String getMessage(String code, Object @Nullable [] args, Locale locale) throws NoSuchMessageException {
+	public String getMessage(String code, Object @Nullable [] args, @Nullable Locale locale) throws NoSuchMessageException {
 		return getMessageSource().getMessage(code, args, locale);
 	}
 
 	@Override
-	public String getMessage(MessageSourceResolvable resolvable, Locale locale) throws NoSuchMessageException {
+	public String getMessage(MessageSourceResolvable resolvable, @Nullable Locale locale) throws NoSuchMessageException {
 		return getMessageSource().getMessage(resolvable, locale);
 	}
 
@@ -1553,6 +1554,12 @@ public abstract class AbstractApplicationContext extends DefaultResourceLoader
 	public void restart() {
 		getLifecycleProcessor().onRestart();
 		publishEvent(new ContextRestartedEvent(this));
+	}
+
+	@Override
+	public void pause() {
+		getLifecycleProcessor().onPause();
+		publishEvent(new ContextPausedEvent(this));
 	}
 
 	@Override
